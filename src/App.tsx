@@ -23,68 +23,15 @@ import { Jersey, Order, VisitorLog } from './types';
 import VisitorTracker from './components/VisitorTracker';
 
 export default function App() {
-  const [bKashNumber, setBKashNumber] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('jerseybazaar_bKash') || '01402580064';
-    }
-    return '01402580064';
-  });
-  const [nagadNumber, setNagadNumber] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('jerseybazaar_nagad') || '01402580064';
-    }
-    return '01402580064';
-  });
-  const [orders, setOrders] = useState<Order[]>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('jerseybazaar_orders');
-      if (saved) {
-        try {
-          return JSON.parse(saved);
-        } catch (e) {
-          console.error(e);
-        }
-      }
-    }
-    return [];
-  });
-  const [jerseysList, setJerseysList] = useState<Jersey[]>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('jerseybazaar_collections');
-      if (saved) {
-        try {
-          return JSON.parse(saved);
-        } catch (e) {
-          console.error(e);
-        }
-      }
-    }
-    return JERSEYS;
-  });
+  const [bKashNumber, setBKashNumber] = useState('01402580064');
+  const [nagadNumber, setNagadNumber] = useState('01402580064');
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [jerseysList, setJerseysList] = useState<Jersey[]>(JERSEYS);
   const [isAdmin, setIsAdmin] = useState(false);
 
   // Views tracker & logs state
-  const [viewsCount, setViewsCount] = useState<number>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('jerseybazaar_views');
-      return saved ? parseInt(saved) : 142;
-    }
-    return 142;
-  });
-
-  const [visitorLogs, setVisitorLogs] = useState<VisitorLog[]>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('jerseybazaar_logs');
-      if (saved) {
-        try {
-          return JSON.parse(saved);
-        } catch (e) {
-          console.error(e);
-        }
-      }
-    }
-    return [];
-  });
+  const [viewsCount, setViewsCount] = useState<number>(147);
+  const [visitorLogs, setVisitorLogs] = useState<VisitorLog[]>([]);
 
 
   // Search & Filters state
@@ -130,88 +77,77 @@ export default function App() {
     return matchesSearch && matchesRegion;
   });
 
-  // Seed default localStorage records if empty / ensure requested numbers are active & setup views tracking
+  // Seed / Sync of initial statistics & settings with the persistent Cloud backend server
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const currentBKash = localStorage.getItem('jerseybazaar_bKash');
-      if (!currentBKash || currentBKash !== '01402580064') {
-        localStorage.setItem('jerseybazaar_bKash', '01402580064');
-        setBKashNumber('01402580064');
-      }
-      const currentNagad = localStorage.getItem('jerseybazaar_nagad');
-      if (!currentNagad || currentNagad !== '01402580064') {
-        localStorage.setItem('jerseybazaar_nagad', '01402580064');
-        setNagadNumber('01402580064');
-      }
-      if (!localStorage.getItem('jerseybazaar_collections')) {
-        localStorage.setItem('jerseybazaar_collections', JSON.stringify(JERSEYS));
-      }
+    const fetchGlobalState = async () => {
+      try {
+        const response = await fetch('/api/config');
+        if (response.ok) {
+          const data = await response.json();
+          setBKashNumber(data.bKashNumber);
+          setNagadNumber(data.nagadNumber);
+          setJerseysList(data.jerseys);
+          setOrders(data.orders);
+          setViewsCount(data.viewsCount);
+          
+          let realSessionId = sessionStorage.getItem('current_log_id');
+          if (!realSessionId) {
+            realSessionId = 'v-real-' + Math.floor(Math.random() * 100000);
+            sessionStorage.setItem('current_log_id', realSessionId);
+            
+            const userAgent = navigator.userAgent;
+            let detectedDevice = 'PC Device';
+            if (/android/i.test(userAgent)) detectedDevice = 'Android Mobile';
+            else if (/iphone|ipad/i.test(userAgent)) detectedDevice = 'iPhone Mobile';
+            else if (/macintosh/i.test(userAgent)) detectedDevice = 'Mac PC';
+            else if (/windows/i.test(userAgent)) detectedDevice = 'Windows PC';
 
-      // 1. Handle view count
-      const currentViews = localStorage.getItem('jerseybazaar_views');
-      const nextViews = currentViews ? parseInt(currentViews) + 1 : 143;
-      localStorage.setItem('jerseybazaar_views', nextViews.toString());
-      setViewsCount(nextViews);
+            const userIp = '103.84.' + Math.floor(Math.random() * 255) + '.' + Math.floor(Math.random() * 255);
+            const userLocation = 'Mirpur, Dhaka'; 
+            const now = new Date();
+            const formatTime = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+            const formatMonth = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+            const formattedTimestamp = `${formatMonth}, ${formatTime}`;
 
-      // 2. Load or seed visitor logs
-      let existingLogs: VisitorLog[] = [];
-      const savedLogs = localStorage.getItem('jerseybazaar_logs');
-      if (savedLogs) {
-        try {
-          existingLogs = JSON.parse(savedLogs);
-        } catch (e) {
-          console.error(e);
+            const realUserLog: VisitorLog = {
+              id: realSessionId,
+              name: 'You (Active Visitor)',
+              location: userLocation,
+              device: detectedDevice,
+              action: 'Entered NAFI Jersey House Webpage',
+              timestamp: formattedTimestamp,
+              ip: userIp,
+              isReal: true
+            };
+
+            // Register subscriber session on our API database server
+            await fetch('/api/visitor-logs', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ singleLog: realUserLog })
+            });
+
+            // Increment page hits views metrics
+            const viewRes = await fetch('/api/views/increment', { method: 'POST' });
+            if (viewRes.ok) {
+              const viewData = await viewRes.json();
+              setViewsCount(viewData.viewsCount);
+            }
+          }
+          
+          // Re-load to fetch all active visitor logs correctly
+          const finalRes = await fetch('/api/config');
+          if (finalRes.ok) {
+            const finalData = await finalRes.json();
+            setVisitorLogs(finalData.visitorLogs);
+          }
         }
+      } catch (err) {
+        console.error("Cloud Run connection fallback. Keeping default in-memory list active.", err);
       }
+    };
 
-      const hasSeed = existingLogs.length > 0;
-      if (!hasSeed) {
-        existingLogs = [
-          { id: 'v-103', name: 'Zeeshan Ahmed', location: 'Mirpur, Dhaka', device: 'Android Mobile', action: 'Purchased Argentina Three-Star Jersey', timestamp: 'May 22, 2026, 06:40 PM', ip: '103.114.172.5' },
-          { id: 'v-104', name: 'Subho Chowdhury', location: 'Sylhet', device: 'iPhone Mobile', action: 'Viewed Bangladesh Gold Edition Home Jersey', timestamp: 'May 22, 2026, 06:55 PM', ip: '103.199.155.12' },
-          { id: 'v-105', name: 'Imran Khan', location: 'Uttara, Dhaka', device: 'Windows PC', action: 'Began order checkout for Japan Special Jersey', timestamp: 'May 22, 2026, 07:02 PM', ip: '113.11.144.17' },
-          { id: 'v-106', name: 'Tanzim Rony', location: 'Banani, Dhaka', device: 'Android Mobile', action: 'Copied bKash Active Number', timestamp: 'May 22, 2026, 07:15 PM', ip: '119.30.22.84' },
-          { id: 'v-107', name: 'Mashrafe Alom', location: 'Chittagong', device: 'Mac PC', action: 'Viewed Brazil 2026 Authentic Home Jersey', timestamp: 'May 22, 2026, 07:18 PM', ip: '37.111.201.2' },
-          { id: 'v-108', name: 'Nabila Karim', location: 'Dhanmondi, Dhaka', device: 'iPhone Mobile', action: 'Verified payment transaction submission', timestamp: 'May 22, 2026, 07:22 PM', ip: '103.144.200.54' },
-          { id: 'v-109', name: 'Zahid Hasan', location: 'Mirpur, Dhaka', device: 'Android Mobile', action: 'Browsing active 2026 Selection Gallery', timestamp: 'May 22, 2026, 07:24 PM', ip: '103.111.18.99' },
-          { id: 'v-110', name: 'Fahim Anwar', location: 'Rajshahi', device: 'Windows PC', action: 'Selected Portugal Navigator Home Jersey', timestamp: 'May 22, 2026, 07:27 PM', ip: '116.58.204.1' }
-        ];
-      }
-
-      // 3. Create real user session record
-      const userAgent = navigator.userAgent;
-      let detectedDevice = 'PC Device';
-      if (/android/i.test(userAgent)) detectedDevice = 'Android Mobile';
-      else if (/iphone|ipad/i.test(userAgent)) detectedDevice = 'iPhone Mobile';
-      else if (/macintosh/i.test(userAgent)) detectedDevice = 'Mac PC';
-      else if (/windows/i.test(userAgent)) detectedDevice = 'Windows PC';
-
-      // Assign random Bangladeshi IP
-      const userIp = '103.84.' + Math.floor(Math.random() * 255) + '.' + Math.floor(Math.random() * 255);
-      const userLocation = 'Mirpur, Dhaka'; 
-
-      const realSessionId = 'v-real-' + Math.floor(Math.random() * 100000);
-      const now = new Date();
-      const formatTime = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-      const formatMonth = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-      const formattedTimestamp = `${formatMonth}, ${formatTime}`;
-
-      const realUserLog: VisitorLog = {
-        id: realSessionId,
-        name: 'You (Active Visitor)',
-        location: userLocation,
-        device: detectedDevice,
-        action: 'Entered NAFI Jersey House Webpage',
-        timestamp: formattedTimestamp,
-        ip: userIp,
-        isReal: true
-      };
-
-      const updatedLogs = [realUserLog, ...existingLogs.filter(l => l.id !== realSessionId)];
-      localStorage.setItem('jerseybazaar_logs', JSON.stringify(updatedLogs));
-      setVisitorLogs(updatedLogs);
-      sessionStorage.setItem('current_log_id', realSessionId);
-    }
+    fetchGlobalState();
   }, []);
 
   // Update active session action helper
@@ -219,8 +155,9 @@ export default function App() {
     if (typeof window !== 'undefined') {
       const activeSessionId = sessionStorage.getItem('current_log_id');
       if (activeSessionId) {
+        // optimistically modernize locally for seamless responsive flow
         setVisitorLogs((prev) => {
-          const updated = prev.map((log) => {
+          return prev.map((log) => {
             if (log.id === activeSessionId) {
               return { 
                 ...log, 
@@ -230,9 +167,18 @@ export default function App() {
             }
             return log;
           });
-          localStorage.setItem('jerseybazaar_logs', JSON.stringify(updated));
-          return updated;
         });
+
+        // persist on persistent system
+        fetch('/api/visitor-logs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            actionUpdate: actionDetails,
+            sessionId: activeSessionId,
+            customName
+          })
+        }).catch(err => console.error("Sync log fail", err));
       }
     }
   };
@@ -253,24 +199,42 @@ export default function App() {
   // Sync state functions
   const handleUpdateBKashNumber = (newNum: string) => {
     setBKashNumber(newNum);
-    localStorage.setItem('jerseybazaar_bKash', newNum);
+    fetch('/api/config/payment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bKashNumber: newNum })
+    }).catch(err => console.error(err));
   };
 
   const handleUpdateNagadNumber = (newNum: string) => {
     setNagadNumber(newNum);
-    localStorage.setItem('jerseybazaar_nagad', newNum);
+    fetch('/api/config/payment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nagadNumber: newNum })
+    }).catch(err => console.error(err));
   };
 
   const handleCreateOrder = (newOrder: Order) => {
     const updated = [newOrder, ...orders];
     setOrders(updated);
-    localStorage.setItem('jerseybazaar_orders', JSON.stringify(updated));
+    
+    fetch('/api/orders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newOrder)
+    }).catch(err => console.error(err));
+
     updateActiveSessionAction(`Submitted transaction ID ${newOrder.transactionId} for ${newOrder.jerseyName}`, `Customer: ${newOrder.customerName}`);
   };
 
   const handleUpdateOrdersList = (updatedOrders: Order[]) => {
     setOrders(updatedOrders);
-    localStorage.setItem('jerseybazaar_orders', JSON.stringify(updatedOrders));
+    fetch('/api/orders/update-list', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orders: updatedOrders })
+    }).catch(err => console.error(err));
   };
 
   // Switch modal state to buy flow
@@ -288,7 +252,12 @@ export default function App() {
         const activeLog = visitorLogs.find(l => l.id === activeId);
         const nextLogs = activeLog ? [activeLog] : [];
         setVisitorLogs(nextLogs);
-        localStorage.setItem('jerseybazaar_logs', JSON.stringify(nextLogs));
+
+        fetch('/api/visitor-logs/clear', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ activeLogId: activeId })
+        }).catch(err => console.error(err));
       }
     }
   };
@@ -331,19 +300,22 @@ export default function App() {
       isReal: false
     };
 
-    const updated = [testVisitor, ...visitorLogs];
-    setVisitorLogs(updated);
-    localStorage.setItem('jerseybazaar_logs', JSON.stringify(updated));
+    setVisitorLogs([testVisitor, ...visitorLogs]);
+    fetch('/api/visitor-logs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ singleLog: testVisitor })
+    }).catch(err => console.error(err));
     
     const nextViews = viewsCount + 1;
     setViewsCount(nextViews);
-    localStorage.setItem('jerseybazaar_views', nextViews.toString());
+    fetch('/api/views/increment', { method: 'POST' }).catch(err => console.error(err));
   };
 
   const handleResetViewsCount = () => {
     if (confirm('Are you authorized to reset cumulative website views counter?')) {
       setViewsCount(1);
-      localStorage.setItem('jerseybazaar_views', '1');
+      fetch('/api/views/reset', { method: 'POST' }).catch(err => console.error(err));
     }
   };
 
@@ -425,7 +397,12 @@ export default function App() {
 
     const updated = [newJersey, ...jerseysList];
     setJerseysList(updated);
-    localStorage.setItem('jerseybazaar_collections', JSON.stringify(updated));
+
+    fetch('/api/jerseys', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newJersey)
+    }).catch(err => console.error("Error adding jersey on backend database", err));
     
     // reset form
     setFormCountry('');
@@ -455,26 +432,27 @@ export default function App() {
 
     const calculatedPriceUSD = Number((formPriceBDT / 100).toFixed(1));
 
-    const updated = jerseysList.map((j) => {
-      if (j.id === editingJersey.id) {
-        return {
-          ...j,
-          country: formCountry,
-          name: formName,
-          priceBDT: Number(formPriceBDT),
-          priceUSD: calculatedPriceUSD,
-          description: formDescription,
-          image: formImage,
-          badgeColor: formBadgeColor,
-          accentColor: formAccentColor,
-          bgGradient: formBgGradient,
-        };
-      }
-      return j;
-    });
+    const editedJersey = {
+      ...editingJersey,
+      country: formCountry,
+      name: formName,
+      priceBDT: Number(formPriceBDT),
+      priceUSD: calculatedPriceUSD,
+      description: formDescription,
+      image: formImage,
+      badgeColor: formBadgeColor,
+      accentColor: formAccentColor,
+      bgGradient: formBgGradient,
+    };
 
+    const updated = jerseysList.map((j) => (j.id === editingJersey.id ? editedJersey : j));
     setJerseysList(updated);
-    localStorage.setItem('jerseybazaar_collections', JSON.stringify(updated));
+
+    fetch('/api/jerseys', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(editedJersey)
+    }).catch(err => console.error("Error editing jersey on backend database", err));
     
     // clear
     setEditingJersey(null);
@@ -490,7 +468,10 @@ export default function App() {
     if (confirm('Are you authorized to entirely delete this national jersey from the live catalogue?')) {
       const updated = jerseysList.filter((j) => j.id !== id);
       setJerseysList(updated);
-      localStorage.setItem('jerseybazaar_collections', JSON.stringify(updated));
+
+      fetch(`/api/jerseys/${id}`, {
+        method: 'DELETE'
+      }).catch(err => console.error("Error deleting jersey", err));
     }
   };
 
